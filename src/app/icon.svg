@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#599fff"/><stop offset="55%" stop-color="#1b5bf5"/><stop offset="100%" stop-color="#142155"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 3 7 12v20c0 15.5 10.4 24.6 25 29 14.6-4.4 25-13.5 25-29V12L32 3Z" fill="url(#g)" stroke="rgba(255,255,255,0.35)" stroke-width="1.2"/>
+  <text x="32" y="41" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="800" font-size="19" fill="#fff">VAT</text>
+</svg>
