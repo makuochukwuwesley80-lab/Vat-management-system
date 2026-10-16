@@ -1,10 +1,11 @@
 "use server";
+import { randomInt } from "node:crypto";
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireProfile } from "@/lib/auth";
-import { phoneToEmail, generateTempPassword } from "@/lib/logic";
+
 
 export interface ActionResult {
   ok: boolean;
@@ -333,7 +334,7 @@ export async function registerFosterParent(form: {
   return { ok: true, credentials };
 }
 
-/** Server-only: provisions an auth account with the service-role client. */
+/** Server-only: provisions a worker or foster-parent account. */
 async function provisionAccount(input: {
   full_name: string;
   phone: string;
@@ -343,43 +344,129 @@ async function provisionAccount(input: {
   foster_parent_id?: string;
 }): Promise<{ email: string; password: string }> {
   const admin = createAdminClient();
-  const email = phoneToEmail(input.phone);
-  const password = generateTempPassword();
 
-  const { data, error } = await admin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { full_name: input.full_name, kind: input.kind },
-  });
-  if (error) {
-    throw new Error(
-      error.message.includes("already")
-        ? "An account with this phone number already exists. The existing account was not changed — contact the System Manager if credentials must be reset."
-        : error.message
-    );
+  const normalize = (value: string) =>
+    value
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+
+  const name = normalize(input.full_name);
+  if (!name) throw new Error("Enter a valid full name.");
+
+  let baseLocal: string;
+  let domain: string;
+
+  if (input.kind === "worker") {
+    const { data: center, error: centerError } = await admin
+      .from("centers")
+      .select("name")
+      .eq("id", input.center_id)
+      .single();
+
+    if (centerError || !center?.name) {
+      throw new Error("Could not determine your center name.");
+    }
+
+    const centerSlug = normalize(center.name);
+    if (!centerSlug) throw new Error("The center name is invalid.");
+
+    baseLocal = name;
+    domain = `${centerSlug}.vat.org`;
+  } else {
+    baseLocal = `${name}fosterparent`;
+    domain = "vat.org";
   }
 
-  const supabase = await createClient();
-  await supabase.from("profiles").upsert({
-    id: data.user.id,
+  // Keep six digits, including any leading zeroes.
+
+  const password = randomInt(0, 1_000_000).toString().padStart(6, "0");
+
+  let email = "";
+  let userId = "";
+  let suffix = 0;
+
+  // Supabase Auth enforces email uniqueness, including concurrent registrations.
+  while (suffix <= 10000) {
+    const localPart = `${baseLocal}${suffix === 0 ? "" : suffix}`;
+    email = `${localPart}@${domain}`;
+
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: input.full_name,
+        kind: input.kind,
+      },
+    });
+
+    if (!error && data.user) {
+      userId = data.user.id;
+      break;
+    }
+
+    const errorText = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
+    const duplicateEmail =
+      errorText.includes("email_exists") ||
+      errorText.includes("user_already_exists") ||
+      (errorText.includes("email") &&
+        (errorText.includes("already") || errorText.includes("registered")));
+
+    if (duplicateEmail) {
+      suffix++;
+      continue;
+    }
+
+    throw new Error(error?.message ?? "Could not create the account.");
+  }
+
+  if (!userId) {
+    throw new Error("Could not find an available email address.");
+  }
+
+  const supabase = admin;
+
+  const { error: profileError } = await supabase.from("profiles").upsert({
+    id: userId,
     full_name: input.full_name,
     phone: input.phone,
     system_role: input.kind === "worker" ? "worker" : "foster_parent",
     center_id: input.center_id,
   });
 
-  if (input.worker_id) {
-    await supabase.from("workers").update({ profile_id: data.user.id }).eq("id", input.worker_id);
+  if (profileError) {
+    await admin.auth.admin.deleteUser(userId);
+    throw new Error(`Account profile could not be saved: ${profileError.message}`);
   }
+
+  if (input.worker_id) {
+    const { error } = await supabase
+      .from("workers")
+      .update({ profile_id: userId })
+      .eq("id", input.worker_id);
+
+    if (error) {
+      await admin.auth.admin.deleteUser(userId);
+      throw new Error(`Worker account could not be linked: ${error.message}`);
+    }
+  }
+
   if (input.foster_parent_id) {
-    await supabase.from("foster_parents").update({ profile_id: data.user.id }).eq("id", input.foster_parent_id);
+    const { error } = await supabase
+      .from("foster_parents")
+      .update({ profile_id: userId })
+      .eq("id", input.foster_parent_id);
+
+    if (error) {
+      await admin.auth.admin.deleteUser(userId);
+      throw new Error(`Foster-parent account could not be linked: ${error.message}`);
+    }
   }
 
   return { email, password };
 }
-
-// ---------------------------------------------------------------------------
 // Worker assignments
 // ---------------------------------------------------------------------------
 export async function assignTask(form: {

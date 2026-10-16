@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { LoginHeader } from "./layout";
-import Link from "next/link";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -15,14 +16,23 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (signInError) {
+      setError(signInError.message);
       setLoading(false);
       return;
     }
-    window.location.href = "/dashboard";
+
+    // Refresh server components so middleware sees the new session cookies,
+    // then navigate into the dashboard.
+    router.refresh();
+    router.push("/dashboard");
   }
 
   return (
@@ -60,7 +70,10 @@ export default function LoginPage() {
           />
         </div>
         {error ? (
-          <p role="alert" className="rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">
+          <p
+            role="alert"
+            className="rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300"
+          >
             {error}
           </p>
         ) : null}
@@ -68,8 +81,7 @@ export default function LoginPage() {
           {loading ? "Signing in…" : "Sign in"}
         </button>
         <p className="text-center text-xs text-muted">
-          Accounts are created by the media team or system manager.{" "}
-          <Link href="/dashboard" className="underline">Go back</Link>
+          Accounts are created by the media team or system manager.
         </p>
       </form>
     </div>

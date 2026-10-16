@@ -1,5 +1,4 @@
 import { requireProfile } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/DashboardShell";
 import { SystemManagerDashboard } from "./system/SystemManagerDashboard";
 import { GeneralPrincipalDashboard } from "@/components/dashboards/GeneralPrincipalDashboard";
@@ -11,26 +10,31 @@ import { FosterParentDashboard } from "@/components/dashboards/FosterParentDashb
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  // requireProfile redirects to /login when there is no active profile
   const profile = await requireProfile();
 
-  const content = (() => {
-    switch (profile.system_role) {
-      case "system_manager":
-        return <SystemManagerDashboard profile={profile} />;
-      case "general_principal":
-        return <GeneralPrincipalDashboard />;
-      case "center_principal":
-        return <CenterPrincipalDashboard />;
-      case "media":
-        return <MediaDashboard profile={profile} />;
-      case "foster_parent":
-        return <FosterParentDashboard profile={profile} />;
-      default:
-        return <WorkerDashboard profile={profile} />;
-    }
-  })();
+  let content: React.ReactNode;
 
-  if (!profile) redirect("/login");
+  switch (profile.system_role) {
+    case "system_manager":
+      content = <SystemManagerDashboard profile={profile} />;
+      break;
+    case "general_principal":
+      content = <GeneralPrincipalDashboard />;
+      break;
+    case "center_principal":
+      content = <CenterPrincipalDashboard />;
+      break;
+    case "media":
+      content = <MediaDashboard profile={profile} />;
+      break;
+    case "foster_parent":
+      content = <FosterParentDashboard profile={profile} />;
+      break;
+    default:
+      // worker (Form Teacher, Subject Teacher, GDC Teacher, PDR Parent, Media Person, etc.)
+      content = <WorkerDashboard profile={profile} />;
+  }
 
   return <DashboardShell profile={profile}>{content}</DashboardShell>;
 }

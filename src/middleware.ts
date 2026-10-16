@@ -4,7 +4,9 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,18 +17,26 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value);
+          });
+          response = NextResponse.next({
+            request: { headers: request.headers },
+          });
+          cookiesToSet.forEach(({ name, value, options }) => {
+            // On localhost (HTTP) browsers drop cookies marked Secure.
+            // Only force secure in production.
+            response.cookies.set(name, value, {
+              ...options,
+              secure: process.env.NODE_ENV === "production",
+            });
+          });
         },
       },
     }
   );
 
+  // Refresh the session so Server Components see an up-to-date user.
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -35,11 +45,17 @@ export async function middleware(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => path.startsWith(p));
 
   if (!user && !isPublic) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
   }
+
   if (user && path === "/login") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
   }
+
   return response;
 }
 
